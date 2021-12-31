@@ -1,108 +1,70 @@
-import streamlit as st 
-import numpy as np 
-
+import streamlit as st
+import pandas as pd
+import base64
 import matplotlib.pyplot as plt
-from sklearn import datasets
-from sklearn.model_selection import train_test_split
+import seaborn as sns
+import numpy as np
 
-from sklearn.decomposition import PCA
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestClassifier
+st.title('NFL Football Stats (Rushing) Explorer')
 
-from sklearn.metrics import accuracy_score
-
-st.title('Streamlit Example')
-
-st.write("""
-# Explore different classifier and datasets
-Which one is the best?
+st.markdown("""
+This app performs simple webscraping of NFL Football player stats data (focusing on Rushing)!
+* **Python libraries:** base64, pandas, streamlit, numpy, matplotlib, seaborn
+* **Data source:** [pro-football-reference.com](https://www.pro-football-reference.com/).
 """)
 
-dataset_name = st.sidebar.selectbox(
-    'Select Dataset',
-    ('Iris', 'Breast Cancer', 'Wine')
-)
+st.sidebar.header('User Input Features')
+selected_year = st.sidebar.selectbox('Year', list(reversed(range(1990,2020))))
 
-st.write(f"## {dataset_name} Dataset")
+# Web scraping of NFL player stats
+# https://www.pro-football-reference.com/years/2019/rushing.htm
+@st.cache
+def load_data(year):
+    url = "https://www.pro-football-reference.com/years/" + str(year) + "/rushing.htm"
+    html = pd.read_html(url, header = 1)
+    df = html[0]
+    raw = df.drop(df[df.Age == 'Age'].index) # Deletes repeating headers in content
+    raw = raw.fillna(0)
+    playerstats = raw.drop(['Rk'], axis=1)
+    return playerstats
+playerstats = load_data(selected_year)
 
-classifier_name = st.sidebar.selectbox(
-    'Select classifier',
-    ('KNN', 'SVM', 'Random Forest')
-)
+# Sidebar - Team selection
+sorted_unique_team = sorted(playerstats.Tm.unique())
+selected_team = st.sidebar.multiselect('Team', sorted_unique_team, sorted_unique_team)
 
-def get_dataset(name):
-    data = None
-    if name == 'Iris':
-        data = datasets.load_iris()
-    elif name == 'Wine':
-        data = datasets.load_wine()
-    else:
-        data = datasets.load_breast_cancer()
-    X = data.data
-    y = data.target
-    return X, y
+# Sidebar - Position selection
+unique_pos = ['RB','QB','WR','FB','TE']
+selected_pos = st.sidebar.multiselect('Position', unique_pos, unique_pos)
 
-X, y = get_dataset(dataset_name)
-st.write('Shape of dataset:', X.shape)
-st.write('number of classes:', len(np.unique(y)))
+# Filtering data
+df_selected_team = playerstats[(playerstats.Tm.isin(selected_team)) & (playerstats.Pos.isin(selected_pos))]
 
-def add_parameter_ui(clf_name):
-    params = dict()
-    if clf_name == 'SVM':
-        C = st.sidebar.slider('C', 0.01, 10.0)
-        params['C'] = C
-    elif clf_name == 'KNN':
-        K = st.sidebar.slider('K', 1, 15)
-        params['K'] = K
-    else:
-        max_depth = st.sidebar.slider('max_depth', 2, 15)
-        params['max_depth'] = max_depth
-        n_estimators = st.sidebar.slider('n_estimators', 1, 100)
-        params['n_estimators'] = n_estimators
-    return params
+st.header('Display Player Stats of Selected Team(s)')
+st.write('Data Dimension: ' + str(df_selected_team.shape[0]) + ' rows and ' + str(df_selected_team.shape[1]) + ' columns.')
+st.dataframe(df_selected_team)
 
-params = add_parameter_ui(classifier_name)
+# Download NBA player stats data
+# https://discuss.streamlit.io/t/how-to-download-file-in-streamlit/1806
+def filedownload(df):
+    csv = df.to_csv(index=False)
+    b64 = base64.b64encode(csv.encode()).decode()  # strings <-> bytes conversions
+    href = f'<a href="data:file/csv;base64,{b64}" download="playerstats.csv">Download CSV File</a>'
+    return href
 
-def get_classifier(clf_name, params):
-    clf = None
-    if clf_name == 'SVM':
-        clf = SVC(C=params['C'])
-    elif clf_name == 'KNN':
-        clf = KNeighborsClassifier(n_neighbors=params['K'])
-    else:
-        clf = clf = RandomForestClassifier(n_estimators=params['n_estimators'], 
-            max_depth=params['max_depth'], random_state=1234)
-    return clf
+st.markdown(filedownload(df_selected_team), unsafe_allow_html=True)
 
-clf = get_classifier(classifier_name, params)
-#### CLASSIFICATION ####
+# Heatmap
+if st.button('Intercorrelation Heatmap'):
+    st.header('Intercorrelation Matrix Heatmap')
+    df_selected_team.to_csv('output.csv',index=False)
+    df = pd.read_csv('output.csv')
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1234)
+    corr = df.corr()
+    mask = np.zeros_like(corr)
+    mask[np.triu_indices_from(mask)] = True
+    with sns.axes_style("white"):
+        f, ax = plt.subplots(figsize=(7, 5))
+        ax = sns.heatmap(corr, mask=mask, vmax=1, square=True)
+    st.pyplot()
 
-clf.fit(X_train, y_train)
-y_pred = clf.predict(X_test)
-
-acc = accuracy_score(y_test, y_pred)
-
-st.write(f'Classifier = {classifier_name}')
-st.write(f'Accuracy =', acc)
-
-#### PLOT DATASET ####
-# Project the data onto the 2 primary principal components
-pca = PCA(2)
-X_projected = pca.fit_transform(X)
-
-x1 = X_projected[:, 0]
-x2 = X_projected[:, 1]
-
-fig = plt.figure()
-plt.scatter(x1, x2,
-        c=y, alpha=0.8,
-        cmap='viridis')
-
-plt.xlabel('Principal Component 1')
-plt.ylabel('Principal Component 2')
-plt.colorbar()
-#plt.show()
-st.pyplot(fig)
